@@ -5,7 +5,7 @@ const BASE_CHIPS = {
   hard: 30
 };
 
-// 一局时间（毫秒），需要真实 1 分钟就保持 60000
+// 一局时间（毫秒）
 const ROUND_DURATION_MS = 60000;
 
 // localStorage key 前缀
@@ -57,13 +57,20 @@ const importCodeInput = document.getElementById("import-code-input");
 
 const historyBody = document.getElementById("history-body");
 
-// ---------- 初始化 ----------
-document.addEventListener("DOMContentLoaded", () => {
+// ---------- 启动入口 ----------
+function bootstrap() {
   loadLastState();
   applyStateToUI();
   setupEventListeners();
   initPriceSource();
-});
+}
+
+// 关键：保证无论 script 在哪里加载都能执行 bootstrap
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootstrap);
+} else {
+  bootstrap();
+}
 
 // ---------- 状态存取 ----------
 function loadLastState() {
@@ -73,7 +80,6 @@ function loadLastState() {
     const saved = JSON.parse(raw);
     if (!saved || typeof saved !== "object") return;
 
-    // 简单校验
     if (!saved.mode || !BASE_CHIPS[saved.mode]) return;
     if (typeof saved.chips !== "number") return;
 
@@ -108,19 +114,16 @@ function saveState() {
 
 // ---------- UI ----------
 function applyStateToUI() {
-  // 模式、筹码、交易对
   modeSelect.value = state.mode;
   chipsDisplay.textContent = state.chips.toFixed(1).replace(/\.0$/, "");
   instIdInput.value = state.instId;
 
-  // 当前局
   if (!currentRound) {
     roundCountdown.textContent = "未开始";
     roundStartPrice.textContent = "--";
     roundEndPrice.textContent = "--";
   }
 
-  // 历史
   renderHistoryTable();
 }
 
@@ -283,7 +286,6 @@ function startNewRound(direction) {
   const startPrice = latestPrice;
   const now = Date.now();
 
-  // 扣除筹码（先扣，再结算）
   state.chips -= bet;
 
   currentRound = {
@@ -296,8 +298,7 @@ function startNewRound(direction) {
 
   roundStartPrice.textContent = startPrice.toFixed(2);
   roundEndPrice.textContent = "--";
-  lastResultEl.textContent =
-    "本局已开始，等待结束价格…";
+  lastResultEl.textContent = "本局已开始，等待结束价格…";
 
   setButtonsEnabled(false);
   updateChipsUI();
@@ -362,14 +363,11 @@ function finishRound() {
   let profit = 0;
 
   if (actualDir === "flat") {
-    // 平局，退还下注
     state.chips += currentRound.bet;
     result = "tie";
     profit = 0;
-    lastResultEl.textContent =
-      "本局价格持平，退还下注筹码。";
+    lastResultEl.textContent = "本局价格持平，退还下注筹码。";
   } else if (actualDir === currentRound.direction) {
-    // 赢：退还本金 + 0.5 倍盈利
     const netProfit = Math.round(currentRound.bet * 0.5 * 10) / 10;
     state.chips += currentRound.bet + netProfit;
     result = "win";
@@ -379,7 +377,6 @@ function finishRound() {
       netProfit.toFixed(1).replace(/\.0$/, "") +
       " 筹码。";
   } else {
-    // 输：已扣掉本金
     result = "lose";
     profit = -currentRound.bet;
     lastResultEl.textContent =
@@ -412,10 +409,9 @@ function finishRound() {
   }
 }
 
-// ---------- 价格来源：优先 WebSocket + 备用模拟 ----------
+// ---------- 价格来源 ----------
 function initPriceSource() {
   connectWebSocket();
-  // 10 秒还没有拿到价格就启用模拟
   setTimeout(() => {
     if (latestPrice == null) {
       startPriceSimulation();
@@ -427,9 +423,7 @@ function reconnectPriceSource() {
   if (ws) {
     try {
       ws.close();
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
     ws = null;
   }
   if (priceSimInterval) {
@@ -495,7 +489,6 @@ function connectWebSocket() {
     });
 
     ws.addEventListener("close", () => {
-      // 如果已经有模拟在跑，就不再重连
       if (priceSimInterval) return;
       priceSourceLabel.textContent = "连接已断开，使用模拟价格";
       ws = null;
@@ -519,12 +512,10 @@ function connectWebSocket() {
   }
 }
 
-// 模拟价格（备用方案，避免前端被 CORS 或网络限制）
 function startPriceSimulation() {
   if (priceSimInterval) return;
 
   if (latestPrice == null) {
-    // 根据交易对随便给个起点
     latestPrice = state.instId.includes("BTC") ? 50000 : 3000;
     lastPriceUpdatedAt = Date.now();
     updatePriceDisplay();
@@ -533,7 +524,7 @@ function startPriceSimulation() {
   priceSourceLabel.textContent = "本地模拟价格";
 
   priceSimInterval = setInterval(() => {
-    const drift = (Math.random() - 0.5) * 0.5; // 大约 ±0.5%
+    const drift = (Math.random() - 0.5) * 0.5;
     latestPrice = latestPrice * (1 + drift / 100);
     lastPriceUpdatedAt = Date.now();
     updatePriceDisplay();
@@ -542,7 +533,6 @@ function startPriceSimulation() {
 
 // ---------- 导出 / 导入账号 ----------
 function generateAccountCode() {
-  // 生成 0x + 40 个十六进制字符
   const bytes = new Uint8Array(20);
   (window.crypto || window.msCrypto).getRandomValues(bytes);
   let hex = "";
@@ -553,7 +543,6 @@ function generateAccountCode() {
 }
 
 function handleExportAccount() {
-  // 生成新账号代码
   const code = generateAccountCode();
   state.accountCode = code;
 
