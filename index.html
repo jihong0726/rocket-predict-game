@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8">
+  <title>火箭 1 分钟 K 线猜涨跌</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="card">
+    <div class="rocket">🚀</div>
+    <h1>火箭 1 分钟 K 线猜涨跌</h1>
+    <p class="subtitle">
+      规则<br>
+      - 每局先投入筹码<br>
+      - 猜下一根 1 分钟 K 线是涨还是跌<br>
+      - 猜对：赚 0.5 倍筹码（例如压 1 拿回 1.5）<br>
+      - 猜错：亏掉本局投入筹码
+    </p>
+
+    <div class="row">
+      <div class="label">交易对</div>
+      <div class="value" id="instId">BTC-USDT-SWAP 来自 OKX</div>
+    </div>
+
+    <div class="row">
+      <div class="label">当前筹码</div>
+      <div class="value" id="chips">100.0</div>
+    </div>
+
+    <div class="row">
+      <div class="label">每局投入筹码</div>
+      <input id="stake" type="number" min="0.1" step="0.1" value="1">
+    </div>
+
+    <div class="row buttons">
+      <button id="btnUp" class="btn up" onclick="placeBet('up')">猜 涨 📈</button>
+      <button id="btnDown" class="btn down" onclick="placeBet('down')">猜 跌 📉</button>
+    </div>
+
+    <div class="status" id="status"><span>等待你开始第一局下注</span></div>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
