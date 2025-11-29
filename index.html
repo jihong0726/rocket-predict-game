@@ -1,167 +1,150 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <title>筹码交易所 模拟小游戏</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="app">
     <header class="app-header">
       <h1>筹码交易所 模拟小游戏</h1>
-      <p>每局一分钟 · 猜涨跌 · 筹码用完就出局（仅娱乐，不构成任何投资建议）</p>
+      <p class="app-subtitle">每局一分鐘 · 猜涨跌 · 筹码用完就出局（仅娱乐，不构成任何投资建议）</p>
     </header>
 
     <main class="app-main">
-      <!-- 左侧：控制区 -->
+      <!-- 左侧：模式 / 当前价格 / 本局信息 -->
       <section class="panel panel-left">
         <!-- 模式 / 账户 -->
-        <section class="card">
-          <div class="card-header">
+        <div class="panel-block">
+          <div class="block-header">
             <h2>模式 / 账户</h2>
+            <button id="btn-change-mode" class="btn btn-ghost small">切换模式</button>
           </div>
-          <div class="card-body form-grid">
-            <div class="form-item full">
-              <label for="mode-select">模式</label>
-              <select id="mode-select">
-                <option value="easy">简单（起始 100 筹码）</option>
-                <option value="normal">普通（起始 60 筹码）</option>
-                <option value="hard">困难（起始 30 筹码）</option>
-              </select>
+          <div class="form-row">
+            <label for="mode-select">模式</label>
+            <select id="mode-select">
+              <option value="easy">简单（起始 100 筹码）</option>
+              <option value="normal">普通（起始 60 筹码）</option>
+              <option value="hard">困难（起始 30 筹码）</option>
+            </select>
+          </div>
+          <div class="info-row">
+            <div class="info-item">
+              <div class="info-label">当前筹码</div>
+              <div class="info-value" id="info-current-chips">--</div>
             </div>
-
-            <div class="form-item">
-              <label>当前筹码</label>
-              <div class="value-large" id="chips-display">--</div>
-            </div>
-
-            <div class="form-item">
-              <label>当前筹码编号</label>
-              <div class="value-large" id="round-seq">0</div>
-            </div>
-
-            <div class="form-item full">
-              <button id="reset-account" class="btn btn-secondary">重置账户</button>
+            <div class="info-item">
+              <div class="info-label">当前筹码编号</div>
+              <div class="info-value" id="info-account-index">--</div>
             </div>
           </div>
-        </section>
+          <button id="btn-reset-account" class="btn btn-outline full">重置账户</button>
+        </div>
 
         <!-- 交易对 / 当前价格 -->
-        <section class="card">
-          <div class="card-header">
+        <div class="panel-block">
+          <div class="block-header">
             <h2>交易对 / 当前价格</h2>
           </div>
-          <div class="card-body form-grid">
-            <div class="form-item full">
-              <label for="symbol-select">交易对</label>
-              <select id="symbol-select">
-                <option value="BTC-USDT">BTC-USDT</option>
-                <option value="ETH-USDT">ETH-USDT</option>
-                <option value="SOL-USDT">SOL-USDT</option>
-              </select>
-            </div>
+          <div class="form-row">
+            <label for="pair-select">交易对</label>
+            <select id="pair-select">
+              <option value="BTC-USDT">BTC-USDT</option>
+              <option value="ETH-USDT">ETH-USDT</option>
+            </select>
+          </div>
 
-            <div class="form-item">
-              <label>当前价格</label>
-              <div class="value-large" id="price-display">--</div>
+          <div class="price-box">
+            <div class="price-row">
+              <span class="price-label">当前价格</span>
+              <span class="price-value" id="current-price">--</span>
             </div>
-
-            <div class="form-item">
-              <label>价格来源</label>
-              <div class="value-text">
-                <span id="price-source">价格加载中...</span>
-              </div>
+            <div class="price-meta">
+              <span id="price-source">指数价格：来自 OKX</span>
+              <span id="price-updated-at">最近更新：--</span>
             </div>
-
-            <div class="form-item full">
-              <label>最近更新</label>
-              <div class="value-text" id="price-updated">--</div>
-            </div>
-
-            <div class="form-item full">
-              <button id="retry-price" class="btn btn-outline">
-                如果价格异常，可重新尝试连接
-              </button>
-            </div>
-
-            <p class="hint">
-              说明：优先使用 OKX 实盘指数价格；若无法连接，将使用本地模拟价格，仅供娱乐。
+            <button id="btn-refresh-price" class="btn btn-outline full">
+              如果价格异常，可重新尝试连接
+            </button>
+            <p class="hint-text">
+              说明：优先使用 OKX 指数价格；若无法连接，将使用本地模拟价格，仅供娱乐。
             </p>
           </div>
-        </section>
+        </div>
 
         <!-- 本局信息 -->
-        <section class="card">
-          <div class="card-header">
+        <div class="panel-block">
+          <div class="block-header">
             <h2>本局信息</h2>
           </div>
-          <div class="card-body form-grid">
-            <div class="form-item">
-              <label>本局倒计时</label>
-              <div class="value-large" id="countdown-display">未开始</div>
-            </div>
 
-            <div class="form-item">
-              <label>本局起始价</label>
-              <div class="value-large" id="round-start-price">--</div>
+          <div class="round-grid">
+            <div class="round-cell">
+              <div class="cell-label">本局倒计时</div>
+              <div class="cell-value" id="round-countdown">未开始</div>
             </div>
-
-            <div class="form-item">
-              <label>本局结束价</label>
-              <div class="value-large" id="round-end-price">--</div>
+            <div class="round-cell">
+              <div class="cell-label">本局起始价</div>
+              <div class="cell-value" id="round-start-price">--</div>
             </div>
-
-            <div class="form-item">
-              <label for="bet-input">本局下注筹码</label>
-              <input id="bet-input" type="number" min="1" step="1" value="10" />
+            <div class="round-cell">
+              <div class="cell-label">本局结束价</div>
+              <div class="cell-value" id="round-end-price">--</div>
             </div>
-
-            <div class="form-item full btn-row">
-              <button id="btn-up" class="btn btn-primary">猜涨</button>
-              <button id="btn-down" class="btn btn-danger">猜跌</button>
-            </div>
-
-            <p class="hint">
-              提示：点击“猜涨 / 猜跌”的时间会锁定交易对与起始价格，60 秒后根据同一交易对的价格判断结果。
-            </p>
           </div>
-        </section>
+
+          <div class="form-row">
+            <label for="stake-input">本局下注筹码</label>
+            <input id="stake-input" type="number" min="1" step="1" value="10" />
+          </div>
+
+          <div class="action-row">
+            <button id="btn-bet-up" class="btn btn-primary">猜涨</button>
+            <button id="btn-bet-down" class="btn btn-danger">猜跌</button>
+          </div>
+
+          <p class="hint-text">
+            提示：点击“猜涨 / 猜跌”都会立即锁定本局交易对和起始价，60 秒后根据同一交易对的价格判断结果。
+          </p>
+        </div>
       </section>
 
-      <!-- 右侧：历史 / 导出导入 -->
+      <!-- 右侧：统计 / 历史 / 账号导入导出 -->
       <section class="panel panel-right">
         <!-- 历史统计 -->
-        <section class="card">
-          <div class="card-header">
+        <div class="panel-block">
+          <div class="block-header">
             <h2>历史统计</h2>
           </div>
-          <div class="card-body history-summary">
-            <div class="summary-item">
-              <div class="label">总局数</div>
-              <div class="value" id="stat-total-games">0</div>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-label">总局数</div>
+              <div class="stat-value" id="stat-total-games">0</div>
             </div>
-            <div class="summary-item">
-              <div class="label">胜率（近 20 局）</div>
-              <div class="value" id="stat-win-rate">--</div>
+            <div class="stat-item">
+              <div class="stat-label">胜率（累计）</div>
+              <div class="stat-value" id="stat-win-rate">--</div>
             </div>
-            <div class="summary-item">
-              <div class="label">最大连胜</div>
-              <div class="value" id="stat-max-streak">0</div>
+            <div class="stat-item">
+              <div class="stat-label">最大连胜</div>
+              <div class="stat-value" id="stat-max-streak">0</div>
             </div>
-            <div class="summary-item">
-              <div class="label">总盈亏</div>
-              <div class="value" id="stat-total-pnl">0</div>
+            <div class="stat-item">
+              <div class="stat-label">总盈亏</div>
+              <div class="stat-value" id="stat-total-pnl">0</div>
             </div>
           </div>
-        </section>
+        </div>
 
         <!-- 历史记录 -->
-        <section class="card history-card">
-          <div class="card-header history-header">
+        <div class="panel-block">
+          <div class="block-header">
             <h2>历史记录</h2>
+            <span class="block-desc">最近 20 局显示在下方，仅本地存储</span>
           </div>
-          <div class="card-body history-body">
+          <div class="table-wrapper">
             <table class="history-table">
               <thead>
                 <tr>
@@ -169,7 +152,10 @@
                   <th>时间</th>
                   <th>交易对</th>
                   <th>方向</th>
+                  <th>起始价</th>
+                  <th>结束价</th>
                   <th>下注</th>
+                  <th>结果</th>
                   <th>盈亏</th>
                 </tr>
               </thead>
@@ -177,46 +163,41 @@
                 <!-- JS 渲染 -->
               </tbody>
             </table>
-            <p class="hint">
-              最近的对局显示在下方，仅本地存储，刷新页面不会丢失。如需导入更多 OKX 行情，只需在 main.js 中替换价格来源模块。
-            </p>
           </div>
-        </section>
+        </div>
 
         <!-- 高级功能：账号导出 / 导入 -->
-        <section class="card">
-          <div class="card-header advanced-header">
+        <div class="panel-block">
+          <div class="block-header">
             <h2>高级功能：账号导出 / 导入</h2>
+            <button id="btn-toggle-advanced" class="btn btn-ghost small">
+              显示高级功能
+            </button>
           </div>
-          <div class="card-body form-grid">
-            <div class="form-item full">
-              <label>导出账号代码（类似钱包地址，包含当前筹码与统计信息）</label>
-              <div class="export-row">
-                <input id="account-code" type="text" readonly />
-                <button id="btn-export-account" class="btn btn-outline">
-                  生成账号
-                </button>
+
+          <div id="advanced-area" class="advanced-area hidden">
+            <div class="form-row">
+              <label for="export-code">导出账号代码（类似钱包地址，本设备生效）</label>
+              <div class="input-with-btn">
+                <input id="export-code" type="text" readonly />
+                <button id="btn-generate-export" class="btn btn-outline small">生成账号</button>
               </div>
             </div>
 
-            <div class="form-item full">
-              <label>导入账号代码</label>
-              <div class="export-row">
-                <input
-                  id="account-code-import"
-                  type="text"
-                  placeholder="ACC-..."
-                />
-                <button id="btn-import-account" class="btn btn-secondary">
-                  导入账号
-                </button>
+            <div class="form-row">
+              <label for="import-code">导入账号代码</label>
+              <div class="input-with-btn">
+                <input id="import-code" type="text" placeholder="例如：ACC-xxxx..." />
+                <button id="btn-import-account" class="btn btn-primary small">导入账号</button>
               </div>
-              <p class="hint">
-                说明：导入账号仅恢复筹码与统计信息，不包含每一局的详细历史记录。
-              </p>
             </div>
+
+            <p class="hint-text">
+              提醒：账号代码仅保存于你自己的浏览器本地，不会上传到任何服务器。
+              更换设备或清空浏览器数据后，之前的代码将无法恢复。
+            </p>
           </div>
-        </section>
+        </div>
       </section>
     </main>
   </div>
