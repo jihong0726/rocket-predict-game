@@ -1,692 +1,623 @@
-// -----------------------------
-// 基础状态
-// -----------------------------
+// ========== 常量 & 初始状态 ==========
+const STORAGE_KEY = "rocket_predict_state_v3";
 
-const STORAGE_KEY = "rocket_predict_game_v2";
-
-const MODE_CONFIG = {
-  easy: { label: "简单", startChips: 100 },
-  normal: { label: "普通", startChips: 60 },
-  hard: { label: "困难", startChips: 30 }
+// 模式配置
+const MODES = {
+  easy: { label: "简单（起始 100 筹码）", startChips: 100 },
+  normal: { label: "普通（起始 60 筹码）", startChips: 60 },
+  hard: { label: "困难（起始 30 筹码）", startChips: 30 },
 };
 
 const DEFAULT_STATE = {
+  version: 1,
   mode: "easy",
-  chips: MODE_CONFIG.easy.startChips,
-  roundSeq: 0,
-  totalGames: 0,
-  totalWin: 0,
-  totalLose: 0,
-  totalPnL: 0,
-  maxStreak: 0,
-  currentStreak: 0,
-  history: [] // 最近 20 局
+  baseChips: MODES.easy.startChips,
+  currentChips: MODES.easy.startChips,
+  accountIndex: 1,
+  selectedPair: "BTC-USDT",
+  // 正在进行的这一局
+  currentRound: null, // { id, pair, direction, stake, startPrice, startAt, timerId, deadline }
+  // 统计
+  stats: {
+    totalGames: 0,
+    totalWins: 0,
+    maxStreak: 0,
+    currentStreak: 0,
+    totalPnl: 0,
+  },
+  // 历史记录（完整存储，但渲染时只展示最近 20）
+  history: [], // { id, time, pair, direction, startPrice, endPrice, stake, result, pnl }
 };
 
 let state = loadState();
-let currentPriceInfo = {
-  instId: "BTC-USDT",
-  price: null,
-  source: "loading", // loading / okx / local
-  updatedAt: null
+
+// 实时价格缓存
+const priceCache = {
+  "BTC-USDT": { price: null, updatedAt: null, source: "okx" },
+  "ETH-USDT": { price: null, updatedAt: null, source: "okx" },
 };
-let timer = null;
-let timerRemaining = 0;
-let currentRound = null; // { id, instId, direction, bet, startPrice, startTime }
 
-// -----------------------------
-// DOM 获取
-// -----------------------------
+// 倒计时定时器
+let countdownInterval = null;
 
+// ========== 工具函数 ==========
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return structuredClone(DEFAULT_STATE);
+    const obj = JSON.parse(raw);
+    return {
+      ...structuredClone(DEFAULT_STATE),
+      ...obj,
+      stats: { ...structuredClone(DEFAULT_STATE.stats), ...(obj.stats || {}) },
+      history: Array.isArray(obj.history) ? obj.history : [],
+    };
+  } catch (e) {
+    console.error("loadState error:", e);
+    return structuredClone(DEFAULT_STATE);
+  }
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function formatTime(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
+function formatPrice(v) {
+  if (v == null || isNaN(v)) return "--";
+  return v.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatPnl(v) {
+  if (v === 0) return "0";
+  return (v > 0 ? "+" : "") + v.toString();
+}
+
+// 生成一个简短的本地账号代码（ACC-xxxx）
+function generateShortAccountCode(fullPayload) {
+  const json = JSON.stringify(fullPayload);
+  const fullBase64 = btoa(encodeURIComponent(json));
+  // 使用前 32 位作为 key
+  const shortKey = fullBase64.slice(0, 32);
+  // 把完整数据藏在 localStorage 里，key 携带短码
+  localStorage.setItem(`rocket_predict_backup_${shortKey}`, fullBase64);
+  return `ACC-${shortKey}`;
+}
+
+function decodeShortAccountCode(code) {
+  if (!code || typeof code !== "string") return null;
+  const trimmed = code.trim();
+  if (!trimmed.startsWith("ACC-")) return null;
+  const shortKey = trimmed.slice(4);
+  const fullBase64 = localStorage.getItem(
+    `rocket_predict_backup_${shortKey}`
+  );
+  if (!fullBase64) return null;
+  try {
+    const json = decodeURIComponent(atob(fullBase64));
+    return JSON.parse(json);
+  } catch (e) {
+    console.error("decodeShortAccountCode error", e);
+    return null;
+  }
+}
+
+// ========== DOM 引用 ==========
+
+// 左侧
 const modeSelect = document.getElementById("mode-select");
-const chipsDisplay = document.getElementById("chips-display");
-const roundSeqDisplay = document.getElementById("round-seq");
+const btnChangeMode = document.getElementById("btn-change-mode");
+const infoCurrentChips = document.getElementById("info-current-chips");
+const infoAccountIndex = document.getElementById("info-account-index");
+const btnResetAccount = document.getElementById("btn-reset-account");
 
-const symbolSelect = document.getElementById("symbol-select");
-const priceDisplay = document.getElementById("price-display");
-const priceSourceSpan = document.getElementById("price-source");
-const priceUpdatedSpan = document.getElementById("price-updated");
-const retryPriceBtn = document.getElementById("retry-price");
+const pairSelect = document.getElementById("pair-select");
+const currentPriceEl = document.getElementById("current-price");
+const priceSourceEl = document.getElementById("price-source");
+const priceUpdatedAtEl = document.getElementById("price-updated-at");
+const btnRefreshPrice = document.getElementById("btn-refresh-price");
 
-const countdownDisplay = document.getElementById("countdown-display");
-const roundStartPriceSpan = document.getElementById("round-start-price");
-const roundEndPriceSpan = document.getElementById("round-end-price");
-const betInput = document.getElementById("bet-input");
-const btnUp = document.getElementById("btn-up");
-const btnDown = document.getElementById("btn-down");
-const resetAccountBtn = document.getElementById("reset-account");
+const roundCountdownEl = document.getElementById("round-countdown");
+const roundStartPriceEl = document.getElementById("round-start-price");
+const roundEndPriceEl = document.getElementById("round-end-price");
+const stakeInput = document.getElementById("stake-input");
+const btnBetUp = document.getElementById("btn-bet-up");
+const btnBetDown = document.getElementById("btn-bet-down");
 
-const statTotalGames = document.getElementById("stat-total-games");
-const statWinRate = document.getElementById("stat-win-rate");
-const statMaxStreak = document.getElementById("stat-max-streak");
-const statTotalPnl = document.getElementById("stat-total-pnl");
+// 右侧
+const statTotalGamesEl = document.getElementById("stat-total-games");
+const statWinRateEl = document.getElementById("stat-win-rate");
+const statMaxStreakEl = document.getElementById("stat-max-streak");
+const statTotalPnlEl = document.getElementById("stat-total-pnl");
+
 const historyBody = document.getElementById("history-body");
 
-const accountCodeOutput = document.getElementById("account-code");
-const accountCodeInput = document.getElementById("account-code-import");
-const btnExportAccount = document.getElementById("btn-export-account");
+const btnToggleAdvanced = document.getElementById("btn-toggle-advanced");
+const advancedArea = document.getElementById("advanced-area");
+const exportCodeInput = document.getElementById("export-code");
+const btnGenerateExport = document.getElementById("btn-generate-export");
+const importCodeInput = document.getElementById("import-code");
 const btnImportAccount = document.getElementById("btn-import-account");
 
-// -----------------------------
-// 初始化
-// -----------------------------
+// ========== 价格相关 ==========
+async function fetchOkxPrice(instId) {
+  const url = `https://www.okx.com/api/v5/market/index-tickers?instId=${encodeURIComponent(
+    instId
+  )}`;
+  const resp = await fetch(url, { mode: "cors" });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  const item = (data.data && data.data[0]) || null;
+  if (!item || !item.idxPx) throw new Error("No idxPx");
+  return parseFloat(item.idxPx);
+}
 
-init();
+// 简单本地模拟价格：在上一次基础上随机波动
+function simulatePrice(pair) {
+  const cache = priceCache[pair];
+  let base = cache.price ?? (pair === "BTC-USDT" ? 90000 : 3500);
+  const drift = pair === "BTC-USDT" ? 200 : 10;
+  const rand = (Math.random() - 0.5) * drift;
+  base = Math.max(1, base + rand);
+  return base;
+}
 
-function init() {
+async function updatePrice(pair, { manual = false } = {}) {
+  const cache = priceCache[pair];
+  let price;
+  let source = "okx";
+
+  try {
+    price = await fetchOkxPrice(pair);
+  } catch (e) {
+    console.warn("OKX price failed, using simulate:", e);
+    price = simulatePrice(pair);
+    source = "mock";
+  }
+
+  cache.price = price;
+  cache.updatedAt = Date.now();
+  cache.source = source;
+
+  if (state.selectedPair === pair) {
+    renderCurrentPrice();
+  }
+
+  if (manual) {
+    if (source === "okx") {
+      alert("已成功从 OKX 获取最新指数价格。");
+    } else {
+      alert("暂时无法连接 OKX，当前价格为本地模拟。");
+    }
+  }
+}
+
+function renderCurrentPrice() {
+  const pair = state.selectedPair;
+  const cache = priceCache[pair];
+
+  if (!cache.price) {
+    currentPriceEl.textContent = "--";
+    priceSourceEl.textContent = "指数价格：正在加载...";
+    priceUpdatedAtEl.textContent = "最近更新：--";
+    return;
+  }
+
+  currentPriceEl.textContent = formatPrice(cache.price);
+  priceSourceEl.textContent =
+    cache.source === "okx"
+      ? "指数价格：来自 OKX"
+      : "当前价格：本地模拟（OKX 暂不可用）";
+  priceUpdatedAtEl.textContent =
+    "最近更新：" + formatTime(cache.updatedAt || Date.now());
+}
+
+// ========== 渲染 ==========
+function renderAccountArea() {
   modeSelect.value = state.mode;
-  symbolSelect.value = currentPriceInfo.instId;
-
-  attachEvents();
-  renderAll();
-  fetchPrice(true);
-
-  // 定时刷新价格
-  setInterval(() => {
-    fetchPrice(false);
-  }, 7000);
+  infoCurrentChips.textContent = state.currentChips.toString();
+  infoAccountIndex.textContent = state.accountIndex.toString();
 }
 
-function attachEvents() {
-  modeSelect.addEventListener("change", () => {
-    state.mode = modeSelect.value;
-    if (state.chips <= 0) {
-      // 如果已破产，切模式时重置筹码
-      state.chips = MODE_CONFIG[state.mode].startChips;
-      state.roundSeq = 0;
-    }
-    saveState();
-    renderAccountArea();
-  });
+function renderRoundArea() {
+  const r = state.currentRound;
+  if (!r) {
+    roundCountdownEl.textContent = "未开始";
+    roundStartPriceEl.textContent = "--";
+    roundEndPriceEl.textContent = "--";
+    btnBetUp.disabled = false;
+    btnBetDown.disabled = false;
+    stakeInput.disabled = false;
+  } else {
+    roundStartPriceEl.textContent = formatPrice(r.startPrice);
+    roundEndPriceEl.textContent = "--";
+    btnBetUp.disabled = true;
+    btnBetDown.disabled = true;
+    stakeInput.disabled = true;
+  }
+}
 
-  symbolSelect.addEventListener("change", () => {
-    currentPriceInfo.instId = symbolSelect.value;
-    fetchPrice(true);
-  });
+function renderStats() {
+  const s = state.stats;
+  statTotalGamesEl.textContent = s.totalGames.toString();
+  if (s.totalGames === 0) {
+    statWinRateEl.textContent = "--";
+  } else {
+    const rate = (s.totalWins / s.totalGames) * 100;
+    statWinRateEl.textContent =
+      rate.toFixed(1).replace(/\.0$/, "") + "%";
+  }
+  statMaxStreakEl.textContent = s.maxStreak.toString();
+  statTotalPnlEl.textContent = formatPnl(s.totalPnl);
+}
 
-  retryPriceBtn.addEventListener("click", () => {
-    fetchPrice(true);
-  });
+function renderHistory() {
+  historyBody.innerHTML = "";
 
-  btnUp.addEventListener("click", () => {
-    startRound("up");
-  });
+  if (!state.history.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 9;
+    td.textContent = "暂无对局记录";
+    td.style.textAlign = "center";
+    td.style.color = "#6b7280";
+    tr.appendChild(td);
+    historyBody.appendChild(tr);
+    return;
+  }
 
-  btnDown.addEventListener("click", () => {
-    startRound("down");
-  });
+  // 最近 20 局，倒序显示（最新在上）
+  const items = state.history.slice(-20).slice().reverse();
 
-  resetAccountBtn.addEventListener("click", () => {
-    if (!confirm("确定要重置账户吗？当前筹码与统计会被清空。")) return;
-    state = {
-      ...DEFAULT_STATE,
-      mode: modeSelect.value,
-      chips: MODE_CONFIG[modeSelect.value].startChips
-    };
-    currentRound = null;
-    clearTimer();
-    saveState();
-    renderAll();
-  });
+  for (const item of items) {
+    const tr = document.createElement("tr");
 
-  btnExportAccount.addEventListener("click", () => {
-    const code = exportShortAccountCode(state);
-    accountCodeOutput.value = code;
-  });
+    const cells = [
+      item.id,
+      formatTime(item.time),
+      item.pair,
+      item.direction === "up" ? "涨" : "跌",
+      formatPrice(item.startPrice),
+      formatPrice(item.endPrice),
+      item.stake.toString(),
+      item.result === "win" ? "赢" : "输",
+      formatPnl(item.pnl),
+    ];
 
-  btnImportAccount.addEventListener("click", () => {
-    const raw = accountCodeInput.value.trim();
-    if (!raw) return;
-    try {
-      const imported = importShortAccountCode(raw);
-      if (!imported) {
-        alert("账号代码格式不正确");
-        return;
+    cells.forEach((val, idx) => {
+      const td = document.createElement("td");
+      td.textContent = val;
+
+      // 方向 / 结果 / 盈亏 上下颜色
+      if (idx === 3) {
+        td.className =
+          item.direction === "up" ? "tag-up" : "tag-down";
+      } else if (idx === 7) {
+        td.className =
+          item.result === "win" ? "tag-up" : "tag-down";
+      } else if (idx === 8) {
+        if (item.pnl > 0) td.className = "pnl-pos";
+        else if (item.pnl < 0) td.className = "pnl-neg";
       }
-      state.mode = imported.mode;
-      state.chips = imported.chips;
-      state.totalGames = imported.totalGames;
-      state.totalWin = imported.totalWin;
-      state.totalLose = imported.totalLose;
-      state.totalPnL = imported.totalPnl;
-      state.maxStreak = imported.maxStreak;
-      state.currentStreak = 0;
-      state.roundSeq = imported.roundSeq;
-      state.history = []; // 历史不随代码迁移
 
-      modeSelect.value = state.mode;
-      clearTimer();
-      currentRound = null;
-      saveState();
-      renderAll();
-      alert("账号导入成功");
-    } catch (e) {
-      console.error(e);
-      alert("账号导入失败，请检查代码是否完整。");
-    }
-  });
+      tr.appendChild(td);
+    });
+
+    historyBody.appendChild(tr);
+  }
 }
-
-// -----------------------------
-// 渲染
-// -----------------------------
 
 function renderAll() {
   renderAccountArea();
-  renderPriceArea();
+  renderCurrentPrice();
   renderRoundArea();
   renderStats();
   renderHistory();
 }
 
-function renderAccountArea() {
-  chipsDisplay.textContent = state.chips.toString();
-  roundSeqDisplay.textContent = state.roundSeq.toString();
+// ========== 业务逻辑 ==========
+
+function changeMode(newMode) {
+  if (!MODES[newMode]) return;
+  state.mode = newMode;
+  state.baseChips = MODES[newMode].startChips;
+  state.currentChips = MODES[newMode].startChips;
+  state.accountIndex = 1;
+  state.currentRound = null;
+  state.stats = structuredClone(DEFAULT_STATE.stats);
+  state.history = [];
+  clearCountdown();
+  saveState();
+  renderAll();
 }
 
-function renderPriceArea() {
-  if (currentPriceInfo.price == null) {
-    priceDisplay.textContent = "--";
-  } else {
-    priceDisplay.textContent = currentPriceInfo.price.toFixed(2);
+function resetAccount() {
+  if (
+    !confirm(
+      "确定要重置账户吗？当前筹码、统计和历史记录都会被清空。"
+    )
+  ) {
+    return;
   }
-
-  if (currentPriceInfo.source === "okx") {
-    priceSourceSpan.textContent = "指数价格：来自 OKX";
-  } else if (currentPriceInfo.source === "local") {
-    priceSourceSpan.textContent = "模拟价格：本地随机波动";
-  } else {
-    priceSourceSpan.textContent = "价格加载中...";
-  }
-
-  if (currentPriceInfo.updatedAt) {
-    const d = new Date(currentPriceInfo.updatedAt);
-    priceUpdatedSpan.textContent = d.toLocaleString();
-  } else {
-    priceUpdatedSpan.textContent = "--";
-  }
+  state.currentChips = state.baseChips;
+  state.accountIndex = 1;
+  state.currentRound = null;
+  state.stats = structuredClone(DEFAULT_STATE.stats);
+  state.history = [];
+  clearCountdown();
+  saveState();
+  renderAll();
 }
 
-function renderRoundArea() {
-  if (!currentRound) {
-    countdownDisplay.textContent = "未开始";
-    roundStartPriceSpan.textContent = "--";
-    roundEndPriceSpan.textContent = "--";
-    symbolSelect.disabled = false;
-  } else {
-    symbolSelect.disabled = true;
-    roundStartPriceSpan.textContent =
-      currentRound.startPrice != null ? currentRound.startPrice.toFixed(2) : "--";
-    if (currentRound.endPrice != null) {
-      roundEndPriceSpan.textContent = currentRound.endPrice.toFixed(2);
-    } else {
-      roundEndPriceSpan.textContent = "--";
-    }
+function clearCountdown() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
   }
 }
 
-function renderStats() {
-  statTotalGames.textContent = state.totalGames.toString();
-  statMaxStreak.textContent = state.maxStreak.toString();
-  statTotalPnl.textContent =
-    (state.totalPnl >= 0 ? "+" : "") + state.totalPnl.toString();
-  statTotalPnl.classList.remove("positive", "negative");
-  if (state.totalPnl > 0) statTotalPnl.classList.add("positive");
-  else if (state.totalPnl < 0) statTotalPnl.classList.add("negative");
-
-  // 近 20 局胜率
-  const recent = state.history.slice(-20);
-  const winCount = recent.filter((h) => h.result === "win").length;
-  if (recent.length === 0) {
-    statWinRate.textContent = "--";
-  } else {
-    statWinRate.textContent =
-      ((winCount / recent.length) * 100).toFixed(1).replace(/\.0$/, "") + "%";
-  }
-}
-
-function renderHistory() {
-  historyBody.innerHTML = "";
-  if (!state.history.length) return;
-
-  const list = state.history.slice(-20).slice().reverse(); // 最近的在最上
-
-  list.forEach((item, idx) => {
-    const mainRow = document.createElement("tr");
-    mainRow.className = "main-row";
-
-    const subRow = document.createElement("tr");
-    subRow.className = "history-sub-row";
-
-    const indexCell = document.createElement("td");
-    indexCell.textContent = (state.history.length - idx).toString();
-    mainRow.appendChild(indexCell);
-
-    const timeCell = document.createElement("td");
-    const time = new Date(item.time);
-    timeCell.textContent = time.toLocaleString();
-    mainRow.appendChild(timeCell);
-
-    const instCell = document.createElement("td");
-    instCell.textContent = item.instId;
-    mainRow.appendChild(instCell);
-
-    const dirCell = document.createElement("td");
-    dirCell.textContent = item.direction === "up" ? "涨" : "跌";
-    dirCell.className =
-      item.direction === "up" ? "history-direction-up" : "history-direction-down";
-    mainRow.appendChild(dirCell);
-
-    const betCell = document.createElement("td");
-    betCell.textContent = item.bet.toString();
-    mainRow.appendChild(betCell);
-
-    const pnlCell = document.createElement("td");
-    pnlCell.textContent = (item.pnl >= 0 ? "+" : "") + item.pnl.toString();
-    pnlCell.className =
-      item.pnl > 0
-        ? "history-pnl-positive"
-        : item.pnl < 0
-        ? "history-pnl-negative"
-        : "";
-    mainRow.appendChild(pnlCell);
-
-    // 子行：展示起始价 / 结束价 / 结果
-    const subIndexCell = document.createElement("td");
-    subIndexCell.textContent = "";
-    subRow.appendChild(subIndexCell);
-
-    const subDetailCell = document.createElement("td");
-    subDetailCell.colSpan = 5;
-    const detailText = `价格 ${item.startPrice.toFixed(
-      2
-    )} → ${item.endPrice.toFixed(2)} · 结果：${
-      item.result === "win" ? "赢" : item.result === "lose" ? "输" : "平"
-    } · 本局盈亏 ${item.pnl >= 0 ? "+" : ""}${item.pnl}`;
-    subDetailCell.textContent = detailText;
-    subRow.appendChild(subDetailCell);
-
-    historyBody.appendChild(mainRow);
-    historyBody.appendChild(subRow);
-  });
-}
-
-// -----------------------------
-// 价格相关
-// -----------------------------
-
-async function fetchPrice(showLoading) {
-  const instId = currentPriceInfo.instId;
-
-  if (showLoading) {
-    currentPriceInfo.price = null;
-    currentPriceInfo.source = "loading";
-    currentPriceInfo.updatedAt = null;
-    renderPriceArea();
-  }
-
-  try {
-    const url =
-      "https://www.okx.com/api/v5/market/index-tickers?instId=" + encodeURIComponent(instId);
-    const res = await fetch(url, { cache: "no-cache" });
-    const data = await res.json();
-    if (data && data.data && data.data.length) {
-      const row = data.data[0];
-      const price = parseFloat(row.idxPx || row.last || row.lastPrice);
-      if (!isNaN(price)) {
-        currentPriceInfo.price = price;
-        currentPriceInfo.source = "okx";
-        currentPriceInfo.updatedAt = Date.now();
-        renderPriceArea();
-        return;
-      }
-    }
-    throw new Error("Empty data");
-  } catch (e) {
-    console.warn("获取 OKX 价格失败，使用本地模拟价格。", e);
-    // 模拟价格
-    if (currentPriceInfo.price == null) {
-      // 初始化一个基础价格
-      if (instId === "BTC-USDT") currentPriceInfo.price = 90000;
-      else if (instId === "ETH-USDT") currentPriceInfo.price = 3500;
-      else currentPriceInfo.price = 150;
-    } else {
-      // 随机轻微波动
-      const base = currentPriceInfo.price;
-      const delta = base * (Math.random() * 0.002 - 0.001);
-      currentPriceInfo.price = base + delta;
-    }
-    currentPriceInfo.source = "local";
-    currentPriceInfo.updatedAt = Date.now();
-    renderPriceArea();
-  }
-}
-
-// -----------------------------
-// 回合逻辑
-// -----------------------------
-
-function startRound(direction) {
-  if (currentRound) {
-    alert("当前回合尚未结束，请等待本局结算。");
+// 开始新的一局
+async function startRound(direction) {
+  if (state.currentRound) {
+    alert("当前还有一局在进行中，请等待结算。");
     return;
   }
 
-  if (state.chips <= 0) {
-    alert("筹码已用完，请先重置账户或导入其它账号。");
+  const stake = Math.floor(Number(stakeInput.value) || 0);
+  if (stake <= 0) {
+    alert("请先设置本局下注筹码（> 0）。");
+    return;
+  }
+  if (stake > state.currentChips) {
+    alert("当前筹码不足，无法下注。");
     return;
   }
 
-  const bet = parseInt(betInput.value, 10);
-  if (!bet || bet <= 0) {
-    alert("请输入有效的下注筹码。");
-    return;
-  }
-  if (bet > state.chips) {
-    alert("下注筹码不能大于当前筹码。");
-    return;
-  }
+  const pair = state.selectedPair;
 
-  if (!currentPriceInfo.price) {
-    alert("当前价格尚未加载，请稍后再试或点击重试获取价格。");
+  // 确保有起始价格（优先从 cache，没有就先获取一次）
+  if (!priceCache[pair].price) {
+    await updatePrice(pair);
+  }
+  const startPrice = priceCache[pair].price;
+  if (!startPrice) {
+    alert("暂时无法获取价格，请稍后重试。");
     return;
   }
 
-  // 锁定本局信息
-  state.chips -= bet;
-  state.roundSeq += 1;
+  const now = Date.now();
+  const id =
+    (state.history.length ? state.history[state.history.length - 1].id : 0) +
+    1;
 
-  currentRound = {
-    id: state.roundSeq,
-    instId: currentPriceInfo.instId,
-    direction,
-    bet,
-    startPrice: currentPriceInfo.price,
-    endPrice: null,
-    startTime: Date.now()
+  state.currentRound = {
+    id,
+    pair,
+    direction, // up / down
+    stake,
+    startPrice,
+    startAt: now,
+    deadline: now + 60 * 1000,
   };
 
-  timerRemaining = 60;
-  updateCountdownDisplay();
-  clearTimer();
-  timer = setInterval(() => {
-    timerRemaining -= 1;
-    if (timerRemaining <= 0) {
-      timerRemaining = 0;
-      clearTimer();
-      settleCurrentRound();
-    }
-    updateCountdownDisplay();
-  }, 1000);
+  // 扣掉筹码（先锁定）
+  state.currentChips -= stake;
 
   saveState();
-  renderAccountArea();
-  renderRoundArea();
+  setupCountdown();
+  renderAll();
 }
 
-function updateCountdownDisplay() {
-  if (!currentRound) {
-    countdownDisplay.textContent = "未开始";
-    return;
+// 设置 1 秒一次的倒计时
+function setupCountdown() {
+  clearCountdown();
+  const r = state.currentRound;
+  if (!r) return;
+
+  function tick() {
+    const now = Date.now();
+    const remain = Math.max(0, Math.floor((r.deadline - now) / 1000));
+    if (remain <= 0) {
+      roundCountdownEl.textContent = "结算中...";
+      clearCountdown();
+      // 走结算逻辑
+      settleCurrentRound();
+    } else {
+      roundCountdownEl.textContent = remain + " 秒";
+    }
   }
-  countdownDisplay.textContent = timerRemaining + " 秒";
+
+  tick();
+  countdownInterval = setInterval(tick, 1000);
 }
 
-function clearTimer() {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
-}
-
+// 结算当前这局
 async function settleCurrentRound() {
-  if (!currentRound) return;
+  const r = state.currentRound;
+  if (!r) return;
 
-  // 结算时，用同一交易对再获取一次价格
-  const targetInstId = currentRound.instId;
-  const previousInst = currentPriceInfo.instId;
+  // 使用“本局锁定的交易对”来获取结束价格
+  await updatePrice(r.pair);
+  const endPrice = priceCache[r.pair].price ?? r.startPrice;
+  roundEndPriceEl.textContent = formatPrice(endPrice);
 
-  // 暂时切换 instId 拉一次价格（只影响内部用，不改下拉框的值）
-  const tmpInfo = { ...currentPriceInfo };
-  try {
-    currentPriceInfo.instId = targetInstId;
-    await fetchPrice(false);
-  } finally {
-    // 不改变 UI 上选择的交易对，只使用我们刚拿到的价格
-    currentPriceInfo.instId = previousInst;
-  }
-
-  const endPrice =
-    currentPriceInfo.price != null ? currentPriceInfo.price : currentRound.startPrice;
-  currentRound.endPrice = endPrice;
-
-  const diff = endPrice - currentRound.startPrice;
-  const isUp = diff > 0;
-  const isDown = diff < 0;
+  const isUp = endPrice > r.startPrice;
+  const isDown = endPrice < r.startPrice;
   let result = "draw";
   let pnl = 0;
 
-  if (isUp && currentRound.direction === "up") {
-    result = "win";
-    pnl = currentRound.bet;
-  } else if (isDown && currentRound.direction === "down") {
-    result = "win";
-    pnl = currentRound.bet;
-  } else if (isUp && currentRound.direction === "down") {
-    result = "lose";
-    pnl = -currentRound.bet;
-  } else if (isDown && currentRound.direction === "up") {
-    result = "lose";
-    pnl = -currentRound.bet;
+  if (isUp || isDown) {
+    const userUp = r.direction === "up";
+    const win = (isUp && userUp) || (isDown && !userUp);
+    result = win ? "win" : "lose";
+    pnl = win ? r.stake : -r.stake;
   } else {
+    // 不涨不跌，视为和局，筹码退回
     result = "draw";
     pnl = 0;
   }
 
-  state.chips += currentRound.bet + pnl; // 返还本金 + 盈亏
-  state.totalGames += 1;
-  state.totalPnL += pnl;
+  // 和局：返还筹码；胜：返还 + 奖励；负：之前已经扣掉，不再加回
+  if (pnl >= 0) {
+    state.currentChips += r.stake + pnl;
+  }
 
+  // 更新统计（累计）
+  const s = state.stats;
+  s.totalGames += 1;
   if (result === "win") {
-    state.totalWin += 1;
-    state.currentStreak += 1;
-    if (state.currentStreak > state.maxStreak) {
-      state.maxStreak = state.currentStreak;
+    s.totalWins += 1;
+    s.currentStreak += 1;
+    if (s.currentStreak > s.maxStreak) {
+      s.maxStreak = s.currentStreak;
     }
   } else if (result === "lose") {
-    state.totalLose += 1;
-    state.currentStreak = 0;
-  } // draw 不改变连胜
+    s.currentStreak = 0;
+  }
+  s.totalPnl += pnl;
 
   // 写入历史
   const historyItem = {
-    id: currentRound.id,
-    time: new Date().toISOString(),
-    instId: currentRound.instId,
-    direction: currentRound.direction,
-    bet: currentRound.bet,
-    startPrice: currentRound.startPrice,
-    endPrice: currentRound.endPrice,
+    id: r.id,
+    time: r.startAt,
+    pair: r.pair,
+    direction: r.direction,
+    startPrice: r.startPrice,
+    endPrice,
+    stake: r.stake,
     result,
-    pnl
+    pnl,
   };
   state.history.push(historyItem);
-  if (state.history.length > 40) {
-    state.history = state.history.slice(-40);
+  // 防止无限增长，最多保留 200 条
+  if (state.history.length > 200) {
+    state.history = state.history.slice(-200);
   }
 
-  currentRound = null;
-  timerRemaining = 0;
+  // 清空当前局
+  state.currentRound = null;
 
   saveState();
   renderAll();
 }
 
-// -----------------------------
-// 本地存储
-// -----------------------------
+// ========== 高级功能：账号导出 / 导入 ==========
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_STATE };
-    const obj = JSON.parse(raw);
-    return { ...DEFAULT_STATE, ...obj };
-  } catch (e) {
-    console.warn("读取本地存储失败，使用默认状态。", e);
-    return { ...DEFAULT_STATE };
-  }
-}
-
-function saveState() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (e) {
-    console.warn("保存本地存储失败。", e);
-  }
-}
-
-// -----------------------------
-// 短账号导出 / 导入（Base58 编码二进制）
-// -----------------------------
-
-// 布局：
-// byte0  : version (1)
-// byte1  : mode (0 easy, 1 normal, 2 hard)
-// byte2-5  chips (int32)
-// byte6-9 totalGames (int32)
-// byte10-13 totalWin (int32)
-// byte14-17 totalLose (int32)
-// byte18-21 totalPnl (int32)
-// byte22-23 roundSeq (uint16)
-// byte24 checksum (简单异或)
-
-const MODE_TO_BYTE = { easy: 0, normal: 1, hard: 2 };
-const BYTE_TO_MODE = { 0: "easy", 1: "normal", 2: "hard" };
-
-function exportShortAccountCode(st) {
-  const buffer = new ArrayBuffer(25);
-  const view = new DataView(buffer);
-
-  view.setUint8(0, 1); // version
-  view.setUint8(1, MODE_TO_BYTE[st.mode] ?? 0);
-  view.setInt32(2, st.chips);
-  view.setInt32(6, st.totalGames);
-  view.setInt32(10, st.totalWin);
-  view.setInt32(14, st.totalLose);
-  view.setInt32(18, st.totalPnL);
-  view.setUint16(22, Math.min(st.roundSeq, 65535));
-
-  // checksum
-  let sum = 0;
-  for (let i = 0; i < 24; i++) {
-    sum ^= view.getUint8(i);
-  }
-  view.setUint8(24, sum);
-
-  const bytes = new Uint8Array(buffer);
-  const b58 = base58Encode(bytes);
-  return "ACC-" + b58;
-}
-
-function importShortAccountCode(code) {
-  if (!code.startsWith("ACC-")) return null;
-  const b58 = code.slice(4);
-  const bytes = base58Decode(b58);
-  if (!bytes || bytes.length !== 25) return null;
-
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
-  // 校验 checksum
-  let sum = 0;
-  for (let i = 0; i < 24; i++) {
-    sum ^= view.getUint8(i);
-  }
-  const checksum = view.getUint8(24);
-  if (sum !== checksum) {
-    throw new Error("Checksum mismatch");
-  }
-
-  const version = view.getUint8(0);
-  if (version !== 1) throw new Error("Unsupported version");
-
-  const modeByte = view.getUint8(1);
-  const mode = BYTE_TO_MODE[modeByte] ?? "easy";
-
-  const chips = view.getInt32(2);
-  const totalGames = view.getInt32(6);
-  const totalWin = view.getInt32(10);
-  const totalLose = view.getInt32(14);
-  const totalPnl = view.getInt32(18);
-  const roundSeq = view.getUint16(22);
-
-  return {
-    mode,
-    chips,
-    totalGames,
-    totalWin,
-    totalLose,
-    totalPnl,
-    roundSeq,
-    maxStreak: 0 // 无法从短码推导，导入后重新累计
+function handleGenerateExport() {
+  const payload = {
+    version: 1,
+    mode: state.mode,
+    baseChips: state.baseChips,
+    currentChips: state.currentChips,
+    accountIndex: state.accountIndex,
+    stats: state.stats,
+    history: state.history,
   };
+  const code = generateShortAccountCode(payload);
+  exportCodeInput.value = code;
 }
 
-// Base58 实现（比特币字母表）
+function handleImportAccount() {
+  const code = importCodeInput.value;
+  const payload = decodeShortAccountCode(code);
+  if (!payload) {
+    alert("无法解析这个账号代码，可能只在原来的设备上可用。");
+    return;
+  }
 
-const B58_ALPHABET =
-  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const B58_MAP = {};
-for (let i = 0; i < B58_ALPHABET.length; i++) {
-  B58_MAP[B58_ALPHABET[i]] = i;
+  state.mode = payload.mode || state.mode;
+  state.baseChips = payload.baseChips || MODES[state.mode].startChips;
+  state.currentChips =
+    typeof payload.currentChips === "number"
+      ? payload.currentChips
+      : state.baseChips;
+  state.accountIndex =
+    typeof payload.accountIndex === "number"
+      ? payload.accountIndex
+      : 1;
+  state.stats = {
+    ...structuredClone(DEFAULT_STATE.stats),
+    ...(payload.stats || {}),
+  };
+  state.history = Array.isArray(payload.history)
+    ? payload.history
+    : [];
+  state.currentRound = null;
+  clearCountdown();
+  saveState();
+  renderAll();
+  alert("账号导入成功，只在本设备可用。");
 }
 
-function base58Encode(buffer) {
-  if (!buffer || !buffer.length) return "";
-  const digits = [0];
-  for (let i = 0; i < buffer.length; i++) {
-    let carry = buffer[i];
-    for (let j = 0; j < digits.length; j++) {
-      const x = digits[j] * 256 + carry;
-      digits[j] = x % 58;
-      carry = (x / 58) | 0;
-    }
-    while (carry) {
-      digits.push(carry % 58);
-      carry = (carry / 58) | 0;
-    }
-  }
-  // 处理前导 0
-  for (let i = 0; i < buffer.length && buffer[i] === 0; i++) {
-    digits.push(0);
-  }
-  return digits
-    .reverse()
-    .map((d) => B58_ALPHABET[d])
-    .join("");
-}
+// ========== 事件绑定 ==========
 
-function base58Decode(str) {
-  if (!str || !str.length) return new Uint8Array(0);
-  const bytes = [0];
-  for (let i = 0; i < str.length; i++) {
-    const c = str[i];
-    const value = B58_MAP[c];
-    if (value == null) throw new Error("Invalid base58 character");
-    let carry = value;
-    for (let j = 0; j < bytes.length; j++) {
-      const x = bytes[j] * 58 + carry;
-      bytes[j] = x & 0xff;
-      carry = x >> 8;
-    }
-    while (carry) {
-      bytes.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  // 处理前导 1（代表 0）
-  for (let i = 0; i < str.length && str[i] === "1"; i++) {
-    bytes.push(0);
-  }
-  return new Uint8Array(bytes.reverse());
-}
+modeSelect.addEventListener("change", (e) => {
+  const newMode = e.target.value;
+  changeMode(newMode);
+});
+
+btnChangeMode.addEventListener("click", () => {
+  const currentKeys = Object.keys(MODES);
+  const idx = currentKeys.indexOf(state.mode);
+  const next = currentKeys[(idx + 1) % currentKeys.length];
+  changeMode(next);
+  modeSelect.value = next;
+});
+
+btnResetAccount.addEventListener("click", resetAccount);
+
+pairSelect.addEventListener("change", (e) => {
+  state.selectedPair = e.target.value;
+  saveState();
+  renderCurrentPrice();
+  updatePrice(state.selectedPair);
+});
+
+btnRefreshPrice.addEventListener("click", () => {
+  updatePrice(state.selectedPair, { manual: true });
+});
+
+btnBetUp.addEventListener("click", () => {
+  startRound("up");
+});
+
+btnBetDown.addEventListener("click", () => {
+  startRound("down");
+});
+
+// 高级区展开折叠
+btnToggleAdvanced.addEventListener("click", () => {
+  const hidden = advancedArea.classList.toggle("hidden");
+  btnToggleAdvanced.textContent = hidden
+    ? "显示高级功能"
+    : "隐藏高级功能";
+});
+
+btnGenerateExport.addEventListener("click", handleGenerateExport);
+btnImportAccount.addEventListener("click", handleImportAccount);
+
+// ========== 初始化 ==========
+
+(function init() {
+  // 恢复 UI 状态
+  modeSelect.value = state.mode;
+  pairSelect.value = state.selectedPair;
+  renderAll();
+
+  // 一进来先拉一次价格
+  updatePrice(state.selectedPair).catch(() => {
+    // 如果失败，后续会用本地模拟
+  });
+})();
