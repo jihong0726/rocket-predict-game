@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>筹码交易所 模拟小游戏</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div>
+        <h1>筹码交易所 模拟小游戏</h1>
+        <p class="subtitle">每局一分钟 · 猜涨跌 · 筹码用完就出局（仅娱乐，不构成任何投资建议）</p>
+      </div>
+      <div class="header-actions">
+        <button id="themeToggleBtn" class="secondary-btn">切换模式</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- 左侧：账户与本局 -->
+      <section class="column">
+        <div class="card">
+          <div class="card-header">
+            <h2>模式 / 账户</h2>
+            <span class="badge">Account</span>
+          </div>
+
+          <label class="field">
+            <span>模式</span>
+            <select id="modeSelect">
+              <option value="easy">简单（起始 100 筹码）</option>
+              <option value="normal">普通（起始 60 筹码）</option>
+              <option value="hard">困难（起始 30 筹码）</option>
+            </select>
+          </label>
+
+          <div class="grid-2">
+            <div class="field readonly">
+              <span>当前筹码</span>
+              <div id="chipsDisplay" class="value-lg">--</div>
+            </div>
+            <div class="field readonly">
+              <span>当前筹码编号</span>
+              <div id="roundIndexDisplay" class="value-lg">--</div>
+            </div>
+          </div>
+
+          <button id="resetAccountBtn" class="danger-outline-btn full-width">
+            重置账户
+          </button>
+          <p class="hint">
+            提示：重置账户会按照当前模式的初始筹码重新开始，但会保留历史记录统计。
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>交易对 / 当前价格</h2>
+          </div>
+
+          <label class="field">
+            <span>交易对</span>
+            <select id="symbolSelect">
+              <option value="BTC-USDT">BTC-USDT</option>
+              <option value="ETH-USDT">ETH-USDT</option>
+            </select>
+          </label>
+
+          <div class="price-panel">
+            <div class="field readonly">
+              <span>当前价格</span>
+              <div id="priceDisplay" class="value-xl">价格加载中...</div>
+              <div class="price-meta">
+                <span id="priceSourceLabel">指数价格：来自 OKX</span>
+                <span id="priceUpdatedAt">最近更新：--</span>
+              </div>
+            </div>
+          </div>
+
+          <button id="reconnectBtn" class="secondary-btn full-width">
+            如果价格异常，可重新尝试连接
+          </button>
+
+          <p class="hint">
+            说明：优先使用 OKX 指数价格；若无法连接，将使用本地模拟价格，仅供娱乐体验。
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>本局信息</h2>
+          </div>
+
+          <div class="grid-3">
+            <div class="field readonly">
+              <span>本局倒计时</span>
+              <div id="countdownDisplay" class="value-lg">未开始</div>
+            </div>
+            <div class="field readonly">
+              <span>本局起始价</span>
+              <div id="startPriceDisplay" class="value-lg">--</div>
+            </div>
+            <div class="field readonly">
+              <span>本局结束价</span>
+              <div id="endPriceDisplay" class="value-lg">--</div>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>本局下注筹码</span>
+            <input id="betSizeInput" type="number" min="1" step="1" value="10" />
+          </label>
+
+          <div class="actions-row">
+            <button id="betUpBtn" class="buy-btn">猜涨</button>
+            <button id="betDownBtn" class="sell-btn">猜跌</button>
+          </div>
+
+          <p class="hint">
+            提示：点击“猜涨 / 猜跌”都会立即锁定本局交易对和起始价格，60 秒后根据同一交易对的价格判断结果。
+          </p>
+        </div>
+      </section>
+
+      <!-- 右侧：统计、历史、高级功能 -->
+      <section class="column">
+        <div class="card">
+          <div class="card-header">
+            <h2>历史统计</h2>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span>总局数</span>
+              <div id="totalRoundsDisplay" class="stat-value">0</div>
+            </div>
+            <div class="stat-item">
+              <span>胜率（累计）</span>
+              <div id="winRateDisplay" class="stat-value">--</div>
+            </div>
+            <div class="stat-item">
+              <span>最大连胜</span>
+              <div id="maxStreakDisplay" class="stat-value">0</div>
+            </div>
+            <div class="stat-item">
+              <span>总盈亏</span>
+              <div id="totalPnlDisplay" class="stat-value">0</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>历史记录</h2>
+            <span class="card-help">最近 20 局显示在下方，仅本地存储，刷新页面不会丢失。</span>
+          </div>
+
+          <div class="table-wrapper">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>时间</th>
+                  <th>交易对</th>
+                  <th>方向</th>
+                  <th>起始价</th>
+                  <th>结束价</th>
+                  <th>下注</th>
+                  <th>结果</th>
+                  <th>盈亏</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>高级功能：账号导出 / 导入</h2>
+          </div>
+
+          <label class="field">
+            <span>导出账号代码（类似钱包地址，本设备生效）</span>
+            <div class="inline-input">
+              <input id="exportCodeInput" type="text" readonly />
+              <button id="generateCodeBtn" class="secondary-btn">生成账号</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>导入账号代码</span>
+            <div class="inline-input">
+              <input id="importCodeInput" type="text" placeholder="例如：ACC-7F3XK9Q2" />
+              <button id="importCodeBtn" class="secondary-btn">导入账号</button>
+            </div>
+          </label>
+
+          <p class="hint">
+            提醒：账号代码仅保存于你自己的浏览器本地，不会上传到任何服务器。更换设备或清空浏览器数据后，之前的账号将无法恢复。
+          </p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
